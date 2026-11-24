@@ -1,7 +1,7 @@
 //
 //  WellcyApp.swift
 //  Wellcy: supporting cancer patients through every stage of life.
-//  Developed by Gaurav Rozatkar for 
+//  Developed by Gaurav Rozatkar for Nexora
 //  Single file. No packages. Requires Xcode 15 or later and iOS 17 or later.
 //  Screens: Home, Daily Check-in, Appointment calendar, Journey.
 //
@@ -46,8 +46,8 @@ enum Sample {
     static let diagnosed: Double = 1677672000      // 1 Mar 2023
     static let surgery: Double = 1682942400        // 1 May 2023
     static let lastTreatment: Double = 1732881600  // 29 Nov 2024
-    static let userName = "Anna"
-    static let familyName = "Mark"
+    static let userName = ""
+    static let familyName = ""
 }
 
 // MARK: - Labels
@@ -131,10 +131,47 @@ struct CheckIn: Identifiable, Codable, Hashable {
 }
 
 struct Letter: Identifiable, Codable, Hashable {
-    var id = UUID()
+    var id: UUID
     var text: String
     var created: Date
     var opensOn: Date
+    var isOpened: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, created, opensOn, isOpened
+    }
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        created: Date,
+        opensOn: Date,
+        isOpened: Bool = false
+    ) {
+        self.id = id
+        self.text = text
+        self.created = created
+        self.opensOn = opensOn
+        self.isOpened = isOpened
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try values.decode(String.self, forKey: .text)
+        created = try values.decode(Date.self, forKey: .created)
+        opensOn = try values.decode(Date.self, forKey: .opensOn)
+        isOpened = try values.decodeIfPresent(Bool.self, forKey: .isOpened) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(id, forKey: .id)
+        try values.encode(text, forKey: .text)
+        try values.encode(created, forKey: .created)
+        try values.encode(opensOn, forKey: .opensOn)
+        try values.encode(isOpened, forKey: .isOpened)
+    }
 }
 
 struct Report: Identifiable, Codable, Hashable {
@@ -253,6 +290,15 @@ final class Store: ObservableObject {
 
     func setMood(_ index: Int) {
         update(day: Date()) { $0.feeling = index }
+    }
+
+    func openLetter(_ letter: Letter) {
+        guard let index = letters.firstIndex(where: { $0.id == letter.id }) else { return }
+        letters[index].isOpened = true
+    }
+
+    func deleteLetter(_ letter: Letter) {
+        letters.removeAll { $0.id == letter.id && $0.isOpened }
     }
 
     // Reports (PDF files copied into the app's Documents folder)
@@ -707,10 +753,11 @@ struct HomeScreen: View {
     @State private var editingName = false
     @State private var nameDraft = ""
 
-    private var greeting: String {
-        let hour = Calendar.current.component(.hour, from: Date())
+    private func greeting(for date: Date) -> String {
+        let hour = Calendar.current.component(.hour, from: date)
         let part = hour < 12 ? "Good morning" : (hour < 18 ? "Good afternoon" : "Good evening")
-        return "\(part), \(userName)"
+        let name = userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? part : "\(part), \(name)"
     }
 
     private var todayMood: Int? { store.checkIn(on: Date())?.feeling }
@@ -735,10 +782,12 @@ struct HomeScreen: View {
                     nameDraft = userName
                     editingName = true
                 } label: {
-                    Text(greeting)
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
-                        .foregroundStyle(Theme.ink)
-                        .multilineTextAlignment(.leading)
+                    TimelineView(.periodic(from: .now, by: 60)) { context in
+                        Text(greeting(for: context.date))
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .foregroundStyle(Theme.ink)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
                 .buttonStyle(.plain)
 
@@ -754,8 +803,7 @@ struct HomeScreen: View {
         .alert("What should we call you?", isPresented: $editingName) {
             TextField("Name", text: $nameDraft)
             Button("Save") {
-                let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { userName = trimmed }
+                userName = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -1365,6 +1413,8 @@ struct JourneyScreen: View {
     @State private var showLetter = false
     @State private var editingFamily = false
     @State private var familyDraft = ""
+    @State private var letterPendingDeletion: Letter?
+    @State private var showDeleteLetterConfirmation = false
 
     var body: some View {
         ScrollView {
@@ -1393,10 +1443,26 @@ struct JourneyScreen: View {
         .alert("Who do you share with?", isPresented: $editingFamily) {
             TextField("Name", text: $familyDraft)
             Button("Save") {
-                let trimmed = familyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { familyName = trimmed }
+                familyName = familyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Delete this letter?",
+            isPresented: $showDeleteLetterConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete letter", role: .destructive) {
+                if let letterPendingDeletion {
+                    store.deleteLetter(letterPendingDeletion)
+                }
+                letterPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                letterPendingDeletion = nil
+            }
+        } message: {
+            Text("This letter will be removed from your journey.")
         }
     }
 
@@ -1515,7 +1581,7 @@ struct JourneyScreen: View {
                 familyDraft = familyName
                 editingFamily = true
             } label: {
-                Text("Shared with \(familyName) (family)")
+                Text(familyName.isEmpty ? "Add a family contact" : "Shared with \(familyName) (family)")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(Theme.ink)
             }
@@ -1534,31 +1600,85 @@ struct JourneyScreen: View {
 
     private var lettersSection: some View {
         VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Letters to future me")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.ink)
+                Text("Open each letter when you're ready. Opened letters stay until you delete them.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.ink.opacity(0.65))
+            }
+
             Button { showLetter = true } label: {
                 Text("✉ Write a letter to future me")
             }
             .buttonStyle(PrimaryButtonStyle())
 
             ForEach(store.letters) { letter in
-                let isOpen = letter.opensOn <= Date()
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(isOpen ? "A letter from \(fmt(letter.created, "d MMM yyyy"))"
-                                : "Sealed until \(fmt(letter.opensOn, "d MMM yyyy"))")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.amethyst)
-                    Text(isOpen ? letter.text : "Your letter is waiting for you. Come back on that day.")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.ink.opacity(0.8))
+                let canOpen = Calendar.current.startOfDay(for: letter.opensOn)
+                    <= Calendar.current.startOfDay(for: Date())
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(letter.isOpened
+                                 ? "Opened letter"
+                                 : (canOpen ? "Ready when you are" : "Sealed until \(fmt(letter.opensOn, "d MMM yyyy"))"))
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.amethyst)
+                            Text("Written \(fmt(letter.created, "d MMM yyyy"))")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.ink.opacity(0.6))
+                        }
+                        Spacer(minLength: 4)
+                        if letter.isOpened {
+                            Button {
+                                letterPendingDeletion = letter
+                                showDeleteLetterConfirmation = true
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.red)
+                                    .frame(width: 36, height: 36)
+                                    .background(Theme.surface.opacity(0.8), in: Circle())
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Delete opened letter")
+                        }
+                    }
+
+                    if letter.isOpened {
+                        Text(letter.text)
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else if canOpen {
+                        Text("Your chosen day has arrived. Open the letter whenever you feel ready.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            store.openLetter(letter)
+                        } label: {
+                            Label("Open letter", systemImage: "envelope.open")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(Theme.amethyst)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 9)
+                                .background(Capsule().fill(Theme.surface.opacity(0.8)))
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Text("Your letter is sealed and will stay here until you open it.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.ink.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassCard()
-                .contextMenu {
-                    Button(role: .destructive) {
-                        store.letters.removeAll { $0.id == letter.id }
-                    } label: {
-                        Label("Delete letter", systemImage: "trash")
-                    }
-                }
             }
         }
     }

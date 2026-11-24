@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import UIKit
 
 struct ProfileScreen: View {
     @AppStorage("wellcy.userName") private var userName = Sample.userName
@@ -54,7 +55,7 @@ struct ProfileScreen: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Change profile picture")
 
-                    Text([userName, surname].filter { !$0.isEmpty }.joined(separator: " "))
+                    Text([userName, surname].filter { !$0.isEmpty }.joined(separator: " ").isEmpty ? "Set up your profile" : [userName, surname].filter { !$0.isEmpty }.joined(separator: " "))
                         .font(.system(size: 23, weight: .bold, design: .rounded))
                         .foregroundStyle(Theme.ink)
                     Text(email.isEmpty ? "Add your email address" : email)
@@ -264,8 +265,7 @@ private struct EditProfileSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let cleanName = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !cleanName.isEmpty { name = cleanName }
+                        name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                         surname = surnameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                         email = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
                         phoneCountryCode = PhoneCountry.all.first(where: { $0.name == phoneCountryNameDraft })?.code ?? "+39"
